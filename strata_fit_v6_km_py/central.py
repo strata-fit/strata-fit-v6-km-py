@@ -5,6 +5,8 @@ from vantage6.algorithm.client import AlgorithmClient
 from vantage6.algorithm.tools.util import info
 from vantage6.algorithm.tools.decorators import algorithm_client
 from vantage6.algorithm.tools.exceptions import PrivacyThresholdViolation
+from strata_fit_v6_km_py.preprocessing import compute_d2t_prevalence_by_year
+
 from .types import (
     NoiseType,
     DEFAULT_INTERVAL_START_COLUMN,
@@ -70,8 +72,24 @@ def kaplan_meier_central(
     km_df["hazard"] = (km_df["observed"] + km_df["interval"] * 0.5) / km_df["at_risk"]
     km_df[DEFAULT_CUMULATIVE_INCIDENCE_COLUMN] = 1 - (1 - km_df["hazard"]).cumprod()
 
+#4 Collect raw patient-level data for prevalence computation
+    info("Step 4: Collecting raw patient-level data for D2T prevalence.")
+    local_raw_dfs = _start_partial_and_collect_results(
+        client,
+        method="get_raw_patient_data",  # ✅ You must ensure this partial exists!
+        organizations_to_include=organizations_to_include,
+    )
+    raw_patient_dfs = [pd.read_json(result) for result in local_raw_dfs]
+    combined_df = pd.concat(raw_patient_dfs, ignore_index=True)
+
+    info("Computing D2T-RA prevalence by year.")
+    prevalence_df = compute_d2t_prevalence_by_year(combined_df)
+
     info("Kaplan-Meier curve with interval censoring computed.")
-    return km_df.to_json()
+    return {
+    "km_result": km_df.to_json(),
+    "d2t_prevalence": prevalence_df.to_json()
+}
 
 def _start_partial_and_collect_results(
     client: AlgorithmClient,

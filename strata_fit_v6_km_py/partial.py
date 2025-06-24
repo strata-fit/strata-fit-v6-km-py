@@ -103,3 +103,14 @@ def get_km_event_table(
     info("Event table constructed successfully with at-risk counts computed.")
 
     return event_table.to_json()
+
+@data(1)
+def get_raw_patient_data(df: pd.DataFrame) -> str:
+    """
+    Partial function to return long-format patient data including D2T_RA status per visit.
+    Used by the central server to compute D2T-RA prevalence by calendar year.
+    """
+    from .preprocessing import get_raw_patient_data_for_central
+    df_long = get_raw_patient_data_for_central(df)
+    return df_long.to_json()
+
