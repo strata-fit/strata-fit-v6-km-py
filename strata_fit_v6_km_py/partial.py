@@ -13,6 +13,7 @@ from .types import (
 )
 from .utils import add_noise_to_event_times
 from .preprocessing import strata_fit_data_to_km_input
+from .preprocessing import compute_d2t_prevalence_by_year
 
 @data(1)
 def get_unique_event_times(
@@ -105,12 +106,11 @@ def get_km_event_table(
     return event_table.to_json()
 
 @data(1)
-def get_raw_patient_data(df: pd.DataFrame) -> str:
+def get_d2t_prevalence_by_year(df: pd.DataFrame) -> str:
     """
-    Partial function to return long-format patient data including D2T_RA status per visit.
-    Used by the central server to compute D2T-RA prevalence by calendar year.
+    Partial function to compute per-year D2T prevalence on each node.
     """
-    from .preprocessing import get_raw_patient_data_for_central
-    df_long = get_raw_patient_data_for_central(df)
-    return df_long.to_json()
+    from .preprocessing import compute_d2t_prevalence_by_year
 
+    prevalence_df = compute_d2t_prevalence_by_year(df)
+    return prevalence_df.to_json()

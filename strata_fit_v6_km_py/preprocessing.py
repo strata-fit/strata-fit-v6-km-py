@@ -164,52 +164,37 @@ def strata_fit_data_to_km_input(df: pd.DataFrame) -> pd.DataFrame:
 
 def compute_d2t_prevalence_by_year(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Computes the number and proportion of patients meeting D2T_RA criteria per calendar year.
+    Computes D2T prevalence by calendar year using minimal data.
 
-    Parameters:
-        df (pd.DataFrame): The preprocessed long-format dataframe (not summary).
-    
-    Returns:
-        pd.DataFrame: Table with one row per year with prevalence data.
-    """
-    # Create column with year of visit (diagnosis year + months_from_diagnosis)
-    df['Year_visit'] = df['Year_diagnosis'] + (df['Visit_months_from_diagnosis'] / 12).astype(int)
-
-    # Only consider years where D2T_RA was evaluated
-    d2t_by_year = df.groupby('Year_visit').agg(
-        total_patients=('pat_ID', pd.Series.nunique),
-        d2t_positive=('D2T_RA', lambda x: x[df.loc[x.index, 'D2T_RA'] == True].nunique())
-    ).reset_index()
-
-    d2t_by_year['D2T_RA_prevalence'] = d2t_by_year['d2t_positive'] / d2t_by_year['total_patients']
-    
-    return d2t_by_year
-
-def get_raw_patient_data_for_central(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Returns long-format STRATA-FIT patient data including D2T_RA status at each visit.
-    Used by the central function to compute year-by-year prevalence.
-
-    This applies all preprocessing except the final patient-level aggregation.
+    Returns only yearly aggregates: total patients and D2T-positive counts.
     """
     df = df.sort_values(['pat_ID', 'Visit_months_from_diagnosis']).copy()
 
-    # Adjust diagnosis year and filter visits before 2006
     shift_mask = df['Year_diagnosis'] < 2006
     year_shift = 2006 - df.loc[shift_mask, 'Year_diagnosis']
-    df.loc[shift_mask, 'Visit_months_from_diagnosis'] = (
-        df.loc[shift_mask, 'Visit_months_from_diagnosis'] - year_shift * 12
-    )
+    df.loc[shift_mask, 'Visit_months_from_diagnosis'] -= year_shift * 12
     df.loc[shift_mask, 'Year_diagnosis'] = 2006
     df = df[df['Visit_months_from_diagnosis'] >= 0].reset_index(drop=True)
 
-    # Compute D2T_RA flags per visit (same logic as in strata_fit_data_to_km_input)
     df['cum_unique_btsDMARD'] = compute_unique_dmards(df)
     df['cum_btsDMARDmin'] = df.groupby('pat_ID')['cum_unique_btsDMARD'].cummin()
     df['rolling_avg_DAS28'] = df.groupby('pat_ID')['DAS28'].rolling(window=3, min_periods=1).mean().reset_index(level=0, drop=True)
+
     df['D2T_crit1'] = df['cum_unique_btsDMARD'] >= 2
     df['D2T_crit2'] = (df['DAS28'] > 3.2) | (df['rolling_avg_DAS28'] > 3.2)
     df['D2T_crit3'] = (df['Pat_global'] > 50) | (df['Ph_global'] > 50)
     df['D2T_RA'] = df['D2T_crit1'] & df['D2T_crit2'] & df['D2T_crit3']
 
-    return df
+    df["Year_visit"] = df["Year_diagnosis"] + (df["Visit_months_from_diagnosis"] / 12).astype(int)
+    df["d2t_positive"] = df["D2T_RA"]
+
+    d2t_by_year = (
+        df.groupby("Year_visit")
+        .agg(
+            total_patients=("pat_ID", "nunique"),
+            d2t_positive=("d2t_positive", "sum")
+        )
+        .reset_index()
+    )
+
+    return d2t_by_year
