@@ -161,3 +161,40 @@ def strata_fit_data_to_km_input(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     return summary
+
+def compute_d2t_prevalence_by_year(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Computes D2T prevalence by calendar year using minimal data.
+
+    Returns only yearly aggregates: total patients and D2T-positive counts.
+    """
+    df = df.sort_values(['pat_ID', 'Visit_months_from_diagnosis']).copy()
+
+    shift_mask = df['Year_diagnosis'] < 2006
+    year_shift = 2006 - df.loc[shift_mask, 'Year_diagnosis']
+    df.loc[shift_mask, 'Visit_months_from_diagnosis'] -= year_shift * 12
+    df.loc[shift_mask, 'Year_diagnosis'] = 2006
+    df = df[df['Visit_months_from_diagnosis'] >= 0].reset_index(drop=True)
+
+    df['cum_unique_btsDMARD'] = compute_unique_dmards(df)
+    df['cum_btsDMARDmin'] = df.groupby('pat_ID')['cum_unique_btsDMARD'].cummin()
+    df['rolling_avg_DAS28'] = df.groupby('pat_ID')['DAS28'].rolling(window=3, min_periods=1).mean().reset_index(level=0, drop=True)
+
+    df['D2T_crit1'] = df['cum_unique_btsDMARD'] >= 2
+    df['D2T_crit2'] = (df['DAS28'] > 3.2) | (df['rolling_avg_DAS28'] > 3.2)
+    df['D2T_crit3'] = (df['Pat_global'] > 50) | (df['Ph_global'] > 50)
+    df['D2T_RA'] = df['D2T_crit1'] & df['D2T_crit2'] & df['D2T_crit3']
+
+    df["Year_visit"] = df["Year_diagnosis"] + (df["Visit_months_from_diagnosis"] / 12).astype(int)
+    df["d2t_positive"] = df["D2T_RA"]
+
+    d2t_by_year = (
+        df.groupby("Year_visit")
+        .agg(
+            total_patients=("pat_ID", "nunique"),
+            d2t_positive=("d2t_positive", "sum")
+        )
+        .reset_index()
+    )
+
+    return d2t_by_year
