@@ -112,20 +112,33 @@ def strata_fit_data_to_km_input(df: pd.DataFrame) -> pd.DataFrame:
     # Compute cumulative unique DMARD classes
     df['cum_unique_btsDMARD'] = compute_unique_dmards(df)
     df['cum_btsDMARDmin'] = df.groupby('pat_ID')['cum_unique_btsDMARD'].cummin()
-    
+    # Identify when each new DMARD class was introduced
+    df['last_dmard_change_id'] = (
+        df.groupby('pat_ID')['cum_unique_btsDMARD']
+        .transform(lambda x: x.ne(x.shift()).cumsum())
+    )
+
+    # Find the month of the last DMARD change per patient per episode
+    df['last_dmard_start_month'] = (
+        df.groupby(['pat_ID', 'last_dmard_change_id'])['Visit_months_from_diagnosis']
+        .transform('min')
+    )
+
+    # Calculate months since the last DMARD initiation
+    df['months_since_last_dmard'] = (
+        df['Visit_months_from_diagnosis'] - df['last_dmard_start_month']
+    )
+
 
     # Rolling average DAS28 (optional improvement)
     df['rolling_avg_DAS28'] = df.groupby('pat_ID')['DAS28'].rolling(window=3, min_periods=1).mean().reset_index(level=0, drop=True)
 
     # Step 2: Define criteria for D2T RA
     df['D2T_crit1'] = df['cum_unique_btsDMARD'] >= 2
-    # --- Find the first time a patient reaches >= 2 unique b/tsDMARDs ---
-    df["time_reach_2_dmards"] = df.groupby("pat_ID")["cum_unique_btsDMARD"].transform(
-        lambda x: df.loc[x.index, "Visit_months_from_diagnosis"].where(x >= 2).min())
-    # Apply time restriction: DAS28 criterion only counts AFTER 6 months from hitting 2 DMARDs
-    df["D2T_crit2"] = np.where(
-        df["Visit_months_from_diagnosis"] >= df["time_reach_2_dmards"] + 6,
-        (df["DAS28"] > 3.2) | (df["rolling_avg_DAS28"] > 3.2),False)
+    df["D2T_crit2"] = (
+        ((df["DAS28"] > 3.2) | (df["rolling_avg_DAS28"] > 3.2)) &
+        (df['months_since_last_dmard'] >= 6)
+    )    
     df['D2T_crit3'] = (df['Pat_global'] > 50) | (df['Ph_global'] > 50)
 
     df['D2T_RA'] = df['D2T_crit1'] & df['D2T_crit2'] & df['D2T_crit3']
