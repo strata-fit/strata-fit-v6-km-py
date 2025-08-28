@@ -119,7 +119,13 @@ def strata_fit_data_to_km_input(df: pd.DataFrame) -> pd.DataFrame:
 
     # Step 2: Define criteria for D2T RA
     df['D2T_crit1'] = df['cum_unique_btsDMARD'] >= 2
-    df['D2T_crit2'] = (df['DAS28'] > 3.2) | (df['rolling_avg_DAS28'] > 3.2)
+    # --- Find the first time a patient reaches >= 2 unique b/tsDMARDs ---
+    df["time_reach_2_dmards"] = df.groupby("pat_ID")["cum_unique_btsDMARD"].transform(
+        lambda x: df.loc[x.index, "Visit_months_from_diagnosis"].where(x >= 2).min())
+    # Apply time restriction: DAS28 criterion only counts AFTER 6 months from hitting 2 DMARDs
+    df["D2T_crit2"] = np.where(
+        df["Visit_months_from_diagnosis"] >= df["time_reach_2_dmards"] + 6,
+        (df["DAS28"] > 3.2) | (df["rolling_avg_DAS28"] > 3.2),False)
     df['D2T_crit3'] = (df['Pat_global'] > 50) | (df['Ph_global'] > 50)
 
     df['D2T_RA'] = df['D2T_crit1'] & df['D2T_crit2'] & df['D2T_crit3']
