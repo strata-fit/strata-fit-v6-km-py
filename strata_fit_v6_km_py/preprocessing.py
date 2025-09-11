@@ -38,21 +38,27 @@ def compute_unique_dmards(df):
     Returns:
         pd.Series: A Series with the cumulative number of unique DMARD 
                    classes per visit, indexed like the input DataFrame.
+   Chnages : bDMARD classes are kept as-is (distinct class IDs).
+             tsDMARD is simplified into a binary indicator: 1 = exposed, 0 = not exposed, NaN = missing.
+             Any tsDMARD exposure counts as one distinct 'tsDMARD' class, regardless of subclass.
     """
     df = df.sort_values(['pat_ID', 'Visit_months_from_diagnosis']).copy()
 
-    def unique_classes(sub_df):
-        unique_b = []
-        unique_ts = []
+    # Normalize tsDMARD: collapse into {1, 0, NaN}
+    df['tsDMARD_binary'] = df['tsDMARD'].apply(
+        lambda x: np.nan if pd.isna(x) else (1 if x != 0 else 0)
+    )
+
+    def unique_classes(sub_df: pd.DataFrame) -> pd.Series:
+        seen = set()
         counts = []
 
-        for b, t in zip(sub_df['bDMARD'], sub_df['tsDMARD']):
-            if not pd.isna(b) and b not in unique_b:
-                unique_b.append(b)
-            if not pd.isna(t) and t not in unique_ts:
-                unique_ts.append(t)
-            total_unique = len(set(unique_b + unique_ts))
-            counts.append(total_unique)
+        for b, t in zip(sub_df['bDMARD'], sub_df['tsDMARD_binary']):
+            if not pd.isna(b):
+                seen.add(('b', b))   # track distinct bDMARD classes
+            if not pd.isna(t) and t == 1:
+                seen.add(('t', 1))   # tsDMARD collapsed to a single class
+            counts.append(len(seen))
 
         return pd.Series(counts, index=sub_df.index)
 
