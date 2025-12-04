@@ -13,6 +13,7 @@ from .types import (
 )
 from .utils import add_noise_to_event_times
 from .preprocessing import strata_fit_data_to_km_input
+from .preprocessing import compute_d2t_prevalence_by_year
 
 @data(1)
 def get_unique_event_times(
@@ -103,3 +104,13 @@ def get_km_event_table(
     info("Event table constructed successfully with at-risk counts computed.")
 
     return event_table.to_json()
+
+@data(1)
+def get_d2t_prevalence_by_year(df: pd.DataFrame) -> str:
+    """
+    Partial function to compute per-year D2T prevalence on each node.
+    """
+    from .preprocessing import compute_d2t_prevalence_by_year
+
+    prevalence_df = compute_d2t_prevalence_by_year(df)
+    return prevalence_df.to_json()

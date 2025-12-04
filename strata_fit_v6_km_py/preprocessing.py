@@ -38,21 +38,27 @@ def compute_unique_dmards(df):
     Returns:
         pd.Series: A Series with the cumulative number of unique DMARD 
                    classes per visit, indexed like the input DataFrame.
+   Chnages : bDMARD classes are kept as-is (distinct class IDs).
+             tsDMARD is simplified into a binary indicator: 1 = exposed, 0 = not exposed, NaN = missing.
+             Any tsDMARD exposure counts as one distinct 'tsDMARD' class, regardless of subclass.
     """
     df = df.sort_values(['pat_ID', 'Visit_months_from_diagnosis']).copy()
 
-    def unique_classes(sub_df):
-        unique_b = []
-        unique_ts = []
+    # Normalize tsDMARD: collapse into {1, 0, NaN}
+    df['tsDMARD_binary'] = df['tsDMARD'].apply(
+        lambda x: np.nan if pd.isna(x) else (1 if x != 0 else 0)
+    )
+
+    def unique_classes(sub_df: pd.DataFrame) -> pd.Series:
+        seen = set()
         counts = []
 
-        for b, t in zip(sub_df['bDMARD'], sub_df['tsDMARD']):
-            if not pd.isna(b) and b not in unique_b:
-                unique_b.append(b)
-            if not pd.isna(t) and t not in unique_ts:
-                unique_ts.append(t)
-            total_unique = len(set(unique_b + unique_ts))
-            counts.append(total_unique)
+        for b, t in zip(sub_df['bDMARD'], sub_df['tsDMARD_binary']):
+            if not pd.isna(b):
+                seen.add(('b', b))   # track distinct bDMARD classes
+            if not pd.isna(t):
+                seen.add(('t', 1))   # tsDMARD collapsed to a single class
+            counts.append(len(seen))
 
         return pd.Series(counts, index=sub_df.index)
 
@@ -112,14 +118,35 @@ def strata_fit_data_to_km_input(df: pd.DataFrame) -> pd.DataFrame:
     # Compute cumulative unique DMARD classes
     df['cum_unique_btsDMARD'] = compute_unique_dmards(df)
     df['cum_btsDMARDmin'] = df.groupby('pat_ID')['cum_unique_btsDMARD'].cummin()
-    
+    # Identify when each new DMARD class was introduced
+    df['last_dmard_change_id'] = (
+        df.groupby('pat_ID')['cum_unique_btsDMARD']
+        .transform(lambda x: x.ne(x.shift()).cumsum())
+    )
 
-    # Rolling average DAS28 (optional improvement)
+    # Find the month of the last DMARD change per patient per episode
+    df['last_dmard_start_month'] = (
+        df.groupby(['pat_ID', 'last_dmard_change_id'])['Visit_months_from_diagnosis']
+        .transform('min')
+    )
+
+    # Calculate months since the last DMARD initiation
+    df['months_since_last_dmard'] = (
+        df['Visit_months_from_diagnosis'] - df['last_dmard_start_month']
+    )
+
+
+    # Rolling average DAS28 (optional improvement) (+ CRP) for sustained activity
     df['rolling_avg_DAS28'] = df.groupby('pat_ID')['DAS28'].rolling(window=3, min_periods=1).mean().reset_index(level=0, drop=True)
+    df['rolling_avg_CRP'] = df.groupby('pat_ID')['CRP'].rolling(window=3, min_periods=1).mean().reset_index(level=0, drop=True)
+
 
     # Step 2: Define criteria for D2T RA
-    df['D2T_crit1'] = df['cum_unique_btsDMARD'] >= 2
-    df['D2T_crit2'] = (df['DAS28'] > 3.2) | (df['rolling_avg_DAS28'] > 3.2)
+    df['D2T_crit1'] = (
+        (df['cum_unique_btsDMARD'] >= 2) &
+        (df['months_since_last_dmard'] >= 6))  # Time criterium is moved to the 1st criterion 
+    df["D2T_crit2"] = (
+        ((df["rolling_avg_DAS28"] > 3.2) | (df["rolling_avg_CRP"]) > 1.0))    
     df['D2T_crit3'] = (df['Pat_global'] > 50) | (df['Ph_global'] > 50)
 
     df['D2T_RA'] = df['D2T_crit1'] & df['D2T_crit2'] & df['D2T_crit3']
@@ -161,3 +188,43 @@ def strata_fit_data_to_km_input(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     return summary
+
+def compute_d2t_prevalence_by_year(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Computes D2T prevalence by calendar year using minimal data.
+
+    Returns only yearly aggregates: total patients and D2T-positive counts.
+    """
+    df = df.sort_values(['pat_ID', 'Visit_months_from_diagnosis']).copy()
+
+    shift_mask = df['Year_diagnosis'] < 2006
+    year_shift = 2006 - df.loc[shift_mask, 'Year_diagnosis']
+    df.loc[shift_mask, 'Visit_months_from_diagnosis'] -= year_shift * 12
+    df.loc[shift_mask, 'Year_diagnosis'] = 2006
+    df = df[df['Visit_months_from_diagnosis'] >= 0].reset_index(drop=True)
+
+    df['cum_unique_btsDMARD'] = compute_unique_dmards(df)
+    df['cum_btsDMARDmin'] = df.groupby('pat_ID')['cum_unique_btsDMARD'].cummin()
+    df['rolling_avg_DAS28'] = df.groupby('pat_ID')['DAS28'].rolling(window=3, min_periods=1).mean().reset_index(level=0, drop=True)
+
+    df['D2T_crit1'] = (
+        (df['cum_unique_btsDMARD'] >= 2) &
+        (df['months_since_last_dmard'] >= 6))  # Time criterium is moved to the 1st criterion 
+    df["D2T_crit2"] = (
+        ((df["rolling_avg_DAS28"] > 3.2) | (df["rolling_avg_CRP"]) > 1.0))    
+    df['D2T_crit3'] = (df['Pat_global'] > 50) | (df['Ph_global'] > 50)
+    df['D2T_RA'] = df['D2T_crit1'] & df['D2T_crit2'] & df['D2T_crit3']
+
+    df["Year_visit"] = df["Year_diagnosis"] + (df["Visit_months_from_diagnosis"] / 12).astype(int)
+    df["d2t_positive"] = df["D2T_RA"]
+
+    d2t_by_year = (
+        df.groupby("Year_visit")
+        .agg(
+            total_patients=("pat_ID", "nunique"),
+            d2t_positive=("d2t_positive", "sum")
+        )
+        .reset_index()
+    )
+
+    return d2t_by_year
