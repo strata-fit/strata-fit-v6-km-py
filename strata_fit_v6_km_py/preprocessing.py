@@ -56,7 +56,7 @@ def compute_unique_dmards(df):
         for b, t in zip(sub_df['bDMARD'], sub_df['tsDMARD_binary']):
             if not pd.isna(b):
                 seen.add(('b', b))   # track distinct bDMARD classes
-            if not pd.isna(t) and t == 1:
+            if not pd.isna(t):
                 seen.add(('t', 1))   # tsDMARD collapsed to a single class
             counts.append(len(seen))
 
@@ -136,15 +136,17 @@ def strata_fit_data_to_km_input(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-    # Rolling average DAS28 (optional improvement)
+    # Rolling average DAS28 (optional improvement) (+ CRP) for sustained activity
     df['rolling_avg_DAS28'] = df.groupby('pat_ID')['DAS28'].rolling(window=3, min_periods=1).mean().reset_index(level=0, drop=True)
+    df['rolling_avg_CRP'] = df.groupby('pat_ID')['CRP'].rolling(window=3, min_periods=1).mean().reset_index(level=0, drop=True)
+
 
     # Step 2: Define criteria for D2T RA
-    df['D2T_crit1'] = df['cum_unique_btsDMARD'] >= 2
+    df['D2T_crit1'] = (
+        (df['cum_unique_btsDMARD'] >= 2) &
+        (df['months_since_last_dmard'] >= 6))  # Time criterium is moved to the 1st criterion 
     df["D2T_crit2"] = (
-        ((df["DAS28"] > 3.2) | (df["rolling_avg_DAS28"] > 3.2)) &
-        (df['months_since_last_dmard'] >= 6)
-    )    
+        ((df["rolling_avg_DAS28"] > 3.2) | (df["rolling_avg_CRP"]) > 1.0))    
     df['D2T_crit3'] = (df['Pat_global'] > 50) | (df['Ph_global'] > 50)
 
     df['D2T_RA'] = df['D2T_crit1'] & df['D2T_crit2'] & df['D2T_crit3']
@@ -205,8 +207,11 @@ def compute_d2t_prevalence_by_year(df: pd.DataFrame) -> pd.DataFrame:
     df['cum_btsDMARDmin'] = df.groupby('pat_ID')['cum_unique_btsDMARD'].cummin()
     df['rolling_avg_DAS28'] = df.groupby('pat_ID')['DAS28'].rolling(window=3, min_periods=1).mean().reset_index(level=0, drop=True)
 
-    df['D2T_crit1'] = df['cum_unique_btsDMARD'] >= 2
-    df['D2T_crit2'] = (df['DAS28'] > 3.2) | (df['rolling_avg_DAS28'] > 3.2)
+    df['D2T_crit1'] = (
+        (df['cum_unique_btsDMARD'] >= 2) &
+        (df['months_since_last_dmard'] >= 6))  # Time criterium is moved to the 1st criterion 
+    df["D2T_crit2"] = (
+        ((df["rolling_avg_DAS28"] > 3.2) | (df["rolling_avg_CRP"]) > 1.0))    
     df['D2T_crit3'] = (df['Pat_global'] > 50) | (df['Ph_global'] > 50)
     df['D2T_RA'] = df['D2T_crit1'] & df['D2T_crit2'] & df['D2T_crit3']
 
