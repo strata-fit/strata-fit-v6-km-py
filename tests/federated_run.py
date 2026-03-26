@@ -30,7 +30,7 @@ config = {
     'username': "chiara-umcutrecht",                                  
     'password': getpass("Password: "),
     'mfa_code': getpass("2FA: "),                     
-    'organization_key': r"C:\Users\cripepi2\coding\privkey_UMCUtrecht.pem"                               # Optional for encryption
+    'organization_key': r"/Users/cripepi2/Desktop/Coding/privkey_UMCUtrecht.pem"                               # Optional for encryption
 }
 
 # CHANGED: Initialize and authenticate client
@@ -97,4 +97,4 @@ assert df_km[DEFAULT_CUMULATIVE_INCIDENCE_COLUMN].max() <= 1.0
 # plotting
 plot_km_curve(df_km)
 
-print("\n✅ Central Kaplan–Meier test completed successfully.")
+print("\n✅ Central Kaplan-Meier test completed successfully.")

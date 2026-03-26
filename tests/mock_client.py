@@ -58,7 +58,9 @@ task = client.task.create(
 
 # --- 4. Collect and parse the result ---
 results_json = client.result.get(task["id"])
-df_km = pd.read_json(results_json)
+df_km = pd.read_json(results_json["km_result"])
+df_prev = pd.read_json(results_json["d2t_prevalence"])
+
 
 # --- 5. Inspect / assert ---
 print("Kaplan–Meier curve (first 5 rows):")
@@ -67,6 +69,10 @@ print(df_km.head(), "\n")
 print("Summary statistics:")
 # print(df_km[["at_risk", "observed", "censored", "interval", "hazard", DEFAULT_CUMULATIVE_INCIDENCE_COLUMN]].describe())
 print(df_km.describe())
+
+print("\n📊 D2T-RA Prevalence by Calendar Year:")
+print(df_prev)
+
 
 # Example assertion (ensure we have at least one time‐point and survival_cdf is ≤1):
 assert not df_km.empty
