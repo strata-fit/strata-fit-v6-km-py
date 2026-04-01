@@ -2,6 +2,7 @@ import warnings
 import os
 import pandas as pd
 from pathlib import Path
+from io import StringIO
 
 from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
 
@@ -58,8 +59,8 @@ task = client.task.create(
 
 # --- 4. Collect and parse the result ---
 results_json = client.result.get(task["id"])
-df_km = pd.read_json(results_json["km_result"])
-df_prev = pd.read_json(results_json["d2t_prevalence"])
+df_km = pd.read_json(StringIO(results_json["km_result"]))
+df_prev = pd.read_json(StringIO(results_json["d2t_prevalence"]))
 
 
 # --- 5. Inspect / assert ---

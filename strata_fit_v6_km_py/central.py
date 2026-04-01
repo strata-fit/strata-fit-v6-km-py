@@ -1,5 +1,6 @@
 import pandas as pd
 from typing import Dict, List, Union, Optional
+from io import StringIO
 
 from vantage6.algorithm.client import AlgorithmClient
 from vantage6.algorithm.tools.util import info
@@ -106,7 +107,7 @@ def kaplan_meier_central(
         snr=snr,
         random_seed=random_seed,
     )
-    local_event_tables = [pd.read_json(result) for result in local_event_tables_results]
+    local_event_tables = [pd.read_json(StringIO(result)) for result in local_event_tables_results]
 
     info("Step 3: Aggregating local event tables.")
     km_df = pd.concat(local_event_tables).groupby(DEFAULT_INTERVAL_START_COLUMN, as_index=False).sum()
@@ -120,7 +121,7 @@ def kaplan_meier_central(
     method="get_d2t_prevalence_by_year",
     organizations_to_include=organizations_to_include,
     )
-    local_prevalence_dfs = [pd.read_json(result) for result in local_prevalence_results]
+    local_prevalence_dfs = [pd.read_json(StringIO(result)) for result in local_prevalence_results]
     prevalence_df = pd.concat(local_prevalence_dfs).groupby("Year_visit", as_index=False).sum()
     prevalence_df["D2T_RA_prevalence"] = (
         prevalence_df["d2t_positive"] / prevalence_df["total_patients"]

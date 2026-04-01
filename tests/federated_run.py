@@ -3,6 +3,7 @@ from vantage6.client import Client
 from time import sleep
 import json
 import pandas as pd
+from io import StringIO
 
 
 from strata_fit_v6_km_py.types import DEFAULT_INTERVAL_START_COLUMN, DEFAULT_CUMULATIVE_INCIDENCE_COLUMN
@@ -80,7 +81,21 @@ for item in result_data['data']:
     print(json.dumps(item['result'], indent=2))
 
 
-df_km = pd.read_json(json.loads(result_data['data'][0]['result']))
+raw_result = result_data["data"][0]["result"]
+if isinstance(raw_result, str):
+    decoded_result = json.loads(raw_result)
+else:
+    decoded_result = raw_result
+
+if isinstance(decoded_result, dict) and "km_result" in decoded_result:
+    km_payload = decoded_result["km_result"]
+else:
+    km_payload = decoded_result
+
+if isinstance(km_payload, dict):
+    km_payload = json.dumps(km_payload)
+
+df_km = pd.read_json(StringIO(km_payload))
 
 # --- 5. Inspect / assert ---
 print("Kaplan–Meier curve (first 5 rows):")
