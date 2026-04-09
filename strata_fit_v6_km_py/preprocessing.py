@@ -21,50 +21,12 @@ def compute_unique_dmards(df: pd.DataFrame) -> pd.Series:
     """
     Compute the cumulative count of unique bDMARD and tsDMARD classes per visit.
 
-<<<<<<< Updated upstream
-    The function assumes that `bDMARD` and `tsDMARD` columns contain integer-encoded
-    drug class identifiers (rather than one-hot or categorical format), consistent
-    with the schema defined in:
-    https://github.com/mdw-nl/strata-fit-data-schema/commit/056faf101ccd12ea555986ef6b0b1f0df90db2ce
-
-    For each patient (`pat_ID`), the function iterates through all visits sorted 
-    by `Visit_months_from_diagnosis` and tracks how many distinct drug classes 
-    (across both bDMARD and tsDMARD) have been used up to each timepoint.
-
-    This transformation is necessary to correctly identify transitions in 
-    therapeutic strategy (i.e., changes in mechanism of action), which are 
-    required for downstream time-to-event analyses such as the Kaplan-Meier 
-    algorithm used in STRATA-FIT.
-
-    Parameters:
-        df (pd.DataFrame): Input DataFrame with columns `pat_ID`, 
-                           `Visit_months_from_diagnosis`, `bDMARD`, `tsDMARD`.
-
-    Returns:
-        pd.Series: A Series with the cumulative number of unique DMARD 
-                   classes per visit, indexed like the input DataFrame.
-=======
     bDMARD class identifiers are counted as distinct classes as-is. tsDMARD is
     collapsed to a single exposure class: any non-zero tsDMARD value counts as
     one shared "tsDMARD exposed" class.
->>>>>>> Stashed changes
     """
     df = df.sort_values(["pat_ID", "Visit_months_from_diagnosis"]).copy()
 
-<<<<<<< Updated upstream
-    def unique_classes(sub_df):
-        unique_b = []
-        unique_ts = []
-        counts = []
-
-        for b, t in zip(sub_df['bDMARD'], sub_df['tsDMARD']):
-            if not pd.isna(b) and b not in unique_b:
-                unique_b.append(b)
-            if not pd.isna(t) and t not in unique_ts:
-                unique_ts.append(t)
-            total_unique = len(set(unique_b + unique_ts))
-            counts.append(total_unique)
-=======
     df["tsDMARD_binary"] = df["tsDMARD"].apply(
         lambda x: np.nan if pd.isna(x) else (1 if x != 0 else 0)
     )
@@ -81,7 +43,6 @@ def compute_unique_dmards(df: pd.DataFrame) -> pd.Series:
             if tsdmard_exposed == 1:
                 seen.add(("t", 1))
             counts.append(len(seen))
->>>>>>> Stashed changes
 
         return pd.Series(counts, index=sub_df.index)
 
@@ -202,41 +163,7 @@ def strata_fit_data_to_km_input(df: pd.DataFrame) -> pd.DataFrame:
     """
     summary = summarize_patient_level_d2t(df)
 
-<<<<<<< Updated upstream
-    # Compute cumulative unique DMARD classes
-    df['cum_unique_btsDMARD'] = compute_unique_dmards(df)
-    df['cum_btsDMARDmin'] = df.groupby('pat_ID')['cum_unique_btsDMARD'].cummin()
-    
-
-    # Rolling average DAS28 (optional improvement)
-    df['rolling_avg_DAS28'] = df.groupby('pat_ID')['DAS28'].rolling(window=3, min_periods=1).mean().reset_index(level=0, drop=True)
-
-    # Step 2: Define criteria for D2T RA
-    df['D2T_crit1'] = df['cum_unique_btsDMARD'] >= 2
-    df['D2T_crit2'] = (df['DAS28'] > 3.2) | (df['rolling_avg_DAS28'] > 3.2)
-    df['D2T_crit3'] = (df['Pat_global'] > 50) | (df['Ph_global'] > 50)
-
-    df['D2T_RA'] = df['D2T_crit1'] & df['D2T_crit2'] & df['D2T_crit3']
-
-    # Step 3: Per-patient summary
-    summary = df.groupby('pat_ID').agg(
-        Year_diagnosis=('Year_diagnosis', 'first'),
-        D2T_RA_Ever=('D2T_RA', 'max'),
-        cum_btsDMARDmin=('cum_btsDMARDmin', 'max'),
-        minFU=('Visit_months_from_diagnosis', 'min'),
-        TTE=('Visit_months_from_diagnosis', lambda x: x[df.loc[x.index, 'D2T_RA']].min() if any(df.loc[x.index, 'D2T_RA']) else np.nan),
-        maxFU=('Visit_months_from_diagnosis', 'max')
-    ).reset_index()
-
-    summary['D2T_RA_Ever'] = summary['D2T_RA_Ever'].fillna(0)
-    summary['cum_btsDMARDmin'] = summary['cum_btsDMARDmin'].fillna(0)
-    summary['TTE'] = summary['TTE'].fillna(summary['maxFU'])
-
-    # Step 4: Define censoring type
-    summary['cens'] = np.select(
-=======
     summary["cens"] = np.select(
->>>>>>> Stashed changes
         condlist=[
             (summary["D2T_RA_Ever"] == 1) & (summary["cum_btsDMARDmin"] > 2),
             (summary["D2T_RA_Ever"] == 0),
@@ -275,36 +202,8 @@ def compute_d2t_prevalence_by_year(df: pd.DataFrame) -> pd.DataFrame:
     """
     visits = derive_d2t_visit_features(df)
 
-<<<<<<< Updated upstream
-    shift_mask = df['Year_diagnosis'] < 2006
-    year_shift = 2006 - df.loc[shift_mask, 'Year_diagnosis']
-    df.loc[shift_mask, 'Visit_months_from_diagnosis'] -= year_shift * 12
-    df.loc[shift_mask, 'Year_diagnosis'] = 2006
-    df = df[df['Visit_months_from_diagnosis'] >= 0].reset_index(drop=True)
-
-    df['cum_unique_btsDMARD'] = compute_unique_dmards(df)
-    df['cum_btsDMARDmin'] = df.groupby('pat_ID')['cum_unique_btsDMARD'].cummin()
-    df['rolling_avg_DAS28'] = df.groupby('pat_ID')['DAS28'].rolling(window=3, min_periods=1).mean().reset_index(level=0, drop=True)
-
-    df['D2T_crit1'] = df['cum_unique_btsDMARD'] >= 2
-    df['D2T_crit2'] = (df['DAS28'] > 3.2) | (df['rolling_avg_DAS28'] > 3.2)
-    df['D2T_crit3'] = (df['Pat_global'] > 50) | (df['Ph_global'] > 50)
-    df['D2T_RA'] = df['D2T_crit1'] & df['D2T_crit2'] & df['D2T_crit3']
-
-    df["Year_visit"] = df["Year_diagnosis"] + (df["Visit_months_from_diagnosis"] / 12).astype(int)
-    df["d2t_positive"] = df["D2T_RA"]
-
-    d2t_by_year = (
-        df.groupby("Year_visit")
-        .agg(
-            total_patients=("pat_ID", "nunique"),
-            d2t_positive=("d2t_positive", "sum")
-        )
-        .reset_index()
-=======
     patient_year = visits.groupby(["Year_visit", "pat_ID"], as_index=False).agg(
         d2t_positive=(DEFAULT_D2T_STEP3_COLUMN, "max")
->>>>>>> Stashed changes
     )
 
     return (
@@ -370,7 +269,9 @@ def compute_d2t_characteristics_summary(df: pd.DataFrame) -> pd.DataFrame:
         .reset_index(drop=True)
     )
 
-    female = _to_binary_indicator(first_d2t["Sex"], {"1", "true", "t", "yes", "y", "female", "f"})
+    female = _to_binary_indicator(
+        first_d2t["Sex"], {"1", "true", "t", "yes", "y", "female", "f"}
+    )
     rf_positive = _to_binary_indicator(
         first_d2t["RF_positivity"], {"1", "true", "t", "yes", "y", "positive", "pos"}
     )
