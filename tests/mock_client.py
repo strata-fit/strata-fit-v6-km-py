@@ -24,11 +24,49 @@ def plot_km_curve(df_km):
     plt.tight_layout()
     plt.show()
 
-# --- 1. Define the per‐node datasets (raw STRATA‑FIT CSVs) ---
-data_directory = Path("tests/data/data_times")
-dataset1 = {"database": data_directory / "alpha.csv", "db_type": "csv"}
-dataset2 = {"database": data_directory / "beta.csv",  "db_type": "csv"}
-dataset3 = {"database": data_directory / "gamma.csv", "db_type": "csv"}
+
+def _fmt_percentage(value):
+    return f"{value:.1f}%" if pd.notna(value) else "NA"
+
+
+def _fmt_mean_sd(mean_value, sd_value):
+    if pd.isna(mean_value):
+        return "NA"
+    if pd.isna(sd_value):
+        return f"{mean_value:.2f}"
+    return f"{mean_value:.2f} ({sd_value:.2f})"
+
+
+def build_d2t_characteristics_display_table(df_char):
+    row = df_char.iloc[0]
+    return pd.DataFrame(
+        {
+            "Characteristic": [
+                "D2T patients, n",
+                "Female, %",
+                "RF positive, %",
+                "Anti-CCP positive, %",
+                "Age at diagnosis, mean (SD)",
+                "DAS28 at D2T classification, mean (SD)",
+            ],
+            "Value": [
+                int(row["d2t_patients"]),
+                _fmt_percentage(row["female_percentage"]),
+                _fmt_percentage(row["rf_positive_percentage"]),
+                _fmt_percentage(row["anti_ccp_positive_percentage"]),
+                _fmt_mean_sd(row["age_mean"], row["age_sd"]),
+                _fmt_mean_sd(row["das28_mean_at_d2t"], row["das28_sd_at_d2t"]),
+            ],
+        }
+    )
+
+# --- 1. Define the per-node datasets ---
+# Use the same real CSV for each mock organization so the federated pipeline
+# can still run with the minimum 3 organizations in the mock client.
+source_file = Path("/data/mock_data/strata_fit_v6_km_py/mock_data.csv")  # adjust as needed
+dataset1 = {"database": source_file, "db_type": "csv"}
+dataset2 = {"database": source_file, "db_type": "csv"}
+dataset3 = {"database": source_file, "db_type": "csv"}
 
 # We have three “organizations” in this mock run:
 org_ids = [0, 1, 2]
@@ -60,6 +98,8 @@ task = client.task.create(
 results_json = client.result.get(task["id"])
 df_km = pd.read_json(results_json["km_result"])
 df_prev = pd.read_json(results_json["d2t_prevalence"])
+df_char = pd.read_json(results_json["d2t_characteristics"])
+df_char_display = build_d2t_characteristics_display_table(df_char)
 
 
 # --- 5. Inspect / assert ---
@@ -72,6 +112,9 @@ print(df_km.describe())
 
 print("\n📊 D2T-RA Prevalence by Calendar Year:")
 print(df_prev)
+
+print("\nD2T population characteristics:")
+print(df_char_display.to_string(index=False))
 
 
 # Example assertion (ensure we have at least one time‐point and survival_cdf is ≤1):
