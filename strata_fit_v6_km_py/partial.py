@@ -1,9 +1,6 @@
 import pandas as pd
-import numpy as np
 from typing import List, Optional
-from vantage6.algorithm.tools.util import info
-from vantage6.algorithm.tools.decorators import data
-from vantage6.algorithm.tools.exceptions import InputError
+from pathlib import Path
 
 from .types import (
     NoiseType, EventType,
@@ -11,14 +8,23 @@ from .types import (
     DEFAULT_INTERVAL_END_COLUMN,
     DEFAULT_EVENT_INDICATOR_COLUMN
 )
+from .io import write_output
+from .log import info
 from .utils import add_noise_to_event_times
 from .preprocessing import strata_fit_data_to_km_input
 from .preprocessing import compute_d2t_prevalence_by_year
+from .cohort import filter_dataframe_for_cohort
+from .runtime import run_context
 
-@data(1)
-def get_unique_event_times(
+
+def _load_dataframe(dataset_path: str | Path) -> pd.DataFrame:
+    return pd.read_csv(Path(dataset_path))
+
+
+def compute_unique_event_times_frame(
     df: pd.DataFrame,
-    noise_type: NoiseType = NoiseType.NONE,
+    cohort: Optional[dict] = None,
+    noise_type: NoiseType | str | None = NoiseType.NONE,
     snr: Optional[float] = None,
     random_seed: Optional[int] = None,
 ) -> List[float]:
@@ -26,6 +32,7 @@ def get_unique_event_times(
     Preprocess the data and collect unique event times from the standardized columns.
     """
     info("Starting get_unique_event_times task.")
+    df = filter_dataframe_for_cohort(df, cohort)
     info("Running preprocessing on input data for unique event times.")
     df = strata_fit_data_to_km_input(df)
     info(f"Preprocessing complete. Processed {df.shape[0]} rows.")
@@ -45,11 +52,11 @@ def get_unique_event_times(
     return unique_times.tolist()
 
 
-@data(1)
-def get_km_event_table(
+def compute_km_event_table_frame(
     df: pd.DataFrame,
     unique_event_times: List[float],
-    noise_type: NoiseType = NoiseType.NONE,
+    cohort: Optional[dict] = None,
+    noise_type: NoiseType | str | None = NoiseType.NONE,
     snr: Optional[float] = None,
     random_seed: Optional[int] = None,
 ) -> str:
@@ -57,6 +64,7 @@ def get_km_event_table(
     Preprocess the data and generate an event table for Kaplan-Meier calculation with interval censoring.
     """
     info("Starting get_km_event_table task.")
+    df = filter_dataframe_for_cohort(df, cohort)
     info("Running preprocessing on input data for KM event table.")
     df = strata_fit_data_to_km_input(df)
     info(f"Preprocessing complete. Processed {df.shape[0]} rows.")
@@ -105,12 +113,81 @@ def get_km_event_table(
 
     return event_table.to_json()
 
-@data(1)
-def get_d2t_prevalence_by_year(df: pd.DataFrame) -> str:
+
+def compute_d2t_prevalence_by_year_frame(
+    df: pd.DataFrame, cohort: Optional[dict] = None
+) -> str:
     """
     Partial function to compute per-year D2T prevalence on each node.
     """
-    from .preprocessing import compute_d2t_prevalence_by_year
-
+    df = filter_dataframe_for_cohort(df, cohort)
     prevalence_df = compute_d2t_prevalence_by_year(df)
     return prevalence_df.to_json()
+
+
+@run_context(
+    input_uris="dataset_path",
+    output_uris="output_path",
+    named_arguments=["cohort", "noise_type", "snr", "random_seed"],
+)
+def get_unique_event_times(
+    dataset_path: str | Path,
+    cohort: Optional[dict] = None,
+    noise_type: NoiseType | str | None = NoiseType.NONE,
+    snr: Optional[float] = None,
+    random_seed: Optional[int] = None,
+    output_path: str | Path | None = None,
+) -> List[float]:
+    result = compute_unique_event_times_frame(
+        _load_dataframe(dataset_path),
+        cohort=cohort,
+        noise_type=noise_type,
+        snr=snr,
+        random_seed=random_seed,
+    )
+    write_output(output_path, result)
+    return result
+
+
+@run_context(
+    input_uris="dataset_path",
+    output_uris="output_path",
+    named_arguments=["unique_event_times", "cohort", "noise_type", "snr", "random_seed"],
+)
+def get_km_event_table(
+    dataset_path: str | Path,
+    unique_event_times: List[float],
+    cohort: Optional[dict] = None,
+    noise_type: NoiseType | str | None = NoiseType.NONE,
+    snr: Optional[float] = None,
+    random_seed: Optional[int] = None,
+    output_path: str | Path | None = None,
+) -> str:
+    result = compute_km_event_table_frame(
+        _load_dataframe(dataset_path),
+        unique_event_times=unique_event_times,
+        cohort=cohort,
+        noise_type=noise_type,
+        snr=snr,
+        random_seed=random_seed,
+    )
+    write_output(output_path, result)
+    return result
+
+
+@run_context(
+    input_uris="dataset_path",
+    output_uris="output_path",
+    named_arguments=["cohort"],
+)
+def get_d2t_prevalence_by_year(
+    dataset_path: str | Path,
+    cohort: Optional[dict] = None,
+    output_path: str | Path | None = None,
+) -> str:
+    result = compute_d2t_prevalence_by_year_frame(
+        _load_dataframe(dataset_path),
+        cohort=cohort,
+    )
+    write_output(output_path, result)
+    return result

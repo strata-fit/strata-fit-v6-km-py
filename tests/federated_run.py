@@ -1,100 +1,135 @@
-from getpass import getpass
-from vantage6.client import Client
-from time import sleep
+from __future__ import annotations
+
+import argparse
+import base64
 import json
-import pandas as pd
+import os
+import time
+
+from getpass import getpass
+from typing import Any
+
+from vantage6.client import Client
 
 
-from strata_fit_v6_km_py.types import DEFAULT_INTERVAL_START_COLUMN, DEFAULT_CUMULATIVE_INCIDENCE_COLUMN
-
-def plot_km_curve(df_km):
-    import matplotlib.pyplot as plt
-    # convert months → years
-    years = df_km["interval_start"] / 12
-    cum_inc = df_km["cumulative_incidence"]
-
-    plt.figure(figsize=(8, 5))
-    plt.step(years, cum_inc, where='post', lw=2)
-    plt.xlabel("Years from diagnosis")
-    plt.ylabel("Cumulative incidence of D2T-RA")
-    plt.title("Cumulative incidence of difficult-to-treat RA (KM estimate)")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
-
-# CHANGED: Combined your config into a simple dict without Pydantic, Dynaconf, or validators
-config = {
-    'server_url': "https://stratafit.prod.medicaldataworks.nl",   
-    'server_port': 443,
-    'server_api': "/api",
-    'username': "chiara-umcutrecht",                                  
-    'password': getpass("Password: "),
-    'mfa_code': getpass("2FA: "),                     
-    'organization_key': r"/Users/cripepi2/Desktop/Coding/privkey_UMCUtrecht.pem"                               # Optional for encryption
+TERMINAL_STATUSES = {
+    "completed",
+    "crashed",
+    "failed",
+    "cancelled",
+    "non-existing Docker image",
 }
 
-# CHANGED: Initialize and authenticate client
-client = Client(config['server_url'], config['server_port'], config['server_api'])
-client.authenticate(config['username'], config['password'], mfa_code=config['mfa_code'])
 
-if config['organization_key']:
-    client.setup_encryption(config['organization_key'])    # 🔴 Optional encryption
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Submit the standalone STRATA-FIT KM algorithm to a Vantage6 deployment."
+    )
+    parser.add_argument("--host", default=os.getenv("V6_SERVER_HOST"))
+    parser.add_argument("--port", type=int, default=int(os.getenv("V6_SERVER_PORT", "443")))
+    parser.add_argument("--api-path", default=os.getenv("V6_API_PATH", "/api"))
+    parser.add_argument("--username", default=os.getenv("V6_USERNAME"))
+    parser.add_argument("--password", default=os.getenv("V6_PASSWORD"))
+    parser.add_argument("--mfa-code", default=os.getenv("V6_MFA_CODE"))
+    parser.add_argument("--organization-key", default=os.getenv("V6_ORGANIZATION_KEY"))
+    parser.add_argument("--collaboration-id", type=int, default=_env_int("V6_COLLABORATION_ID"))
+    parser.add_argument("--master-org-id", type=int, default=_env_int("V6_MASTER_ORG_ID"))
+    parser.add_argument("--organization-ids", default=os.getenv("V6_ORGANIZATION_IDS"))
+    parser.add_argument("--dataset-label", default=os.getenv("V6_DATASET_LABEL"))
+    parser.add_argument("--image", default=os.getenv("V6_ALGO_IMAGE"))
+    parser.add_argument("--timeout-s", type=int, default=int(os.getenv("V6_TASK_TIMEOUT_S", "900")))
+    return parser.parse_args()
 
-# 🔴 OPTIONAL: List organizations and collaborations
-print("Available collaborations:")
-print(client.collaboration.list(fields=['id', 'name']))
-print("\nAvailable organizations:")
-print(client.organization.list(fields=['id', 'name']))
 
-# 🔴 CHANGED: Define task input (you can replace this with your desired algorithm config)
-task_input = {
-    'method': 'kaplan_meier_central',                             # 🔴 Example method
-    'kwargs': {
-        'organizations_to_include': [5],
-        'noise_type': "GAUSSIAN",
-        'snr': 200,
-        'random_seed': 2025
+def _env_int(name: str) -> int | None:
+    raw = os.getenv(name)
+    return int(raw) if raw else None
+
+
+def decode_result(value: Any) -> Any:
+    if value is None or isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return {"raw": str(value)}
+    try:
+        return json.loads(base64.b64decode(value).decode("utf-8"))
+    except Exception:
+        pass
+    try:
+        return json.loads(value)
+    except Exception:
+        return {"raw": value}
+
+
+def build_client(args: argparse.Namespace) -> Client:
+    if not args.host or not args.username:
+        raise ValueError("V6_SERVER_HOST and V6_USERNAME are required")
+
+    password = args.password or getpass("Password: ")
+    client = Client(args.host, args.port, args.api_path)
+    client.authenticate(args.username, password, mfa_code=args.mfa_code or None)
+    client.setup_encryption(args.organization_key or None)
+    return client
+
+
+def resolve_org_ids(args: argparse.Namespace) -> list[int]:
+    if not args.organization_ids:
+        raise ValueError("V6_ORGANIZATION_IDS is required")
+    return [int(part.strip()) for part in args.organization_ids.split(",") if part.strip()]
+
+
+def wait_for_terminal(client: Client, task_id: int, timeout_s: int) -> str:
+    deadline = time.time() + timeout_s
+    status = None
+    while time.time() < deadline:
+        current = client.task.get(task_id).get("status")
+        if current != status:
+            print(f"task {task_id} status: {current}")
+            status = current
+        if current in TERMINAL_STATUSES:
+            return str(current)
+        time.sleep(2)
+    raise TimeoutError(f"Task {task_id} did not finish before timeout")
+
+
+def main() -> None:
+    args = parse_args()
+    client = build_client(args)
+
+    if args.collaboration_id is None or args.master_org_id is None:
+        raise ValueError("V6_COLLABORATION_ID and V6_MASTER_ORG_ID are required")
+    if not args.dataset_label or not args.image:
+        raise ValueError("V6_DATASET_LABEL and V6_ALGO_IMAGE are required")
+
+    organization_ids = resolve_org_ids(args)
+    task_input = {
+        "method": "kaplan_meier_central",
+        "kwargs": {
+            "organizations_to_include": organization_ids,
+        },
     }
-}
 
-# 🔴 CHANGED: Define task payload
-task = client.task.create(
-    collaboration=3,                                       
-    organizations=[5],                                     
-    name="demo-stats-task",
-    image="ghcr.io/mdw-nl/strata-fit-v6-km-py@sha256:bc4d691aac6da06767b813800557c2868da2e1b30121ffeaf0c1211bd9f739a1",
-    description="KM",
-    databases=[{'label': 'dataset_202504'}],
-    input_=task_input
-)
+    task = client.task.create(
+        collaboration=args.collaboration_id,
+        organizations=[args.master_org_id],
+        name="strata-fit-km",
+        image=args.image,
+        description="Standalone STRATA-FIT Kaplan-Meier",
+        databases=[{"label": args.dataset_label}],
+        input_=task_input,
+    )
 
-# 🔴 CHANGED: Wait for results
-print("\nWaiting for results...")
-task_id = task["id"]
-result_info = client.wait_for_results(task_id)
-result_data = client.result.from_task(task_id=task_id)
+    print(f"submitted task {task['id']}")
+    status = wait_for_terminal(client, int(task["id"]), args.timeout_s)
+    print(f"final status: {status}")
 
-# 🔴 Display nicely
-print("\nResults:")
-for item in result_data['data']:
-    print(json.dumps(item['result'], indent=2))
+    result_rows = client.result.from_task(task_id=int(task["id"])).get("data", [])
+    if not result_rows:
+        raise RuntimeError("Task returned no result rows")
+
+    decoded = decode_result(result_rows[0].get("result"))
+    print(json.dumps(decoded, indent=2))
 
 
-df_km = pd.read_json(json.loads(result_data['data'][0]['result']))
-
-# --- 5. Inspect / assert ---
-print("Kaplan–Meier curve (first 5 rows):")
-print(df_km.head(), "\n")
-
-print("Summary statistics:")
-# print(df_km[["at_risk", "observed", "censored", "interval", "hazard", DEFAULT_CUMULATIVE_INCIDENCE_COLUMN]].describe())
-print(df_km.describe())
-
-# Example assertion (ensure we have at least one time‐point and survival_cdf is ≤1):
-assert not df_km.empty
-assert df_km[DEFAULT_CUMULATIVE_INCIDENCE_COLUMN].max() <= 1.0
-
-# plotting
-plot_km_curve(df_km)
-
-print("\n✅ Central Kaplan-Meier test completed successfully.")
+if __name__ == "__main__":
+    main()
