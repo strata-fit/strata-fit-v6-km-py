@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
-from vantage6.algorithm.tools.util import info
-from vantage6.algorithm.tools.exceptions import InputError
 
+from .exceptions import InputError
+from .log import info
 from .types import NoiseType
 
 def add_noise_to_event_times(
@@ -12,7 +12,9 @@ def add_noise_to_event_times(
     snr: float | None,
     random_seed: int | None
 ) -> pd.DataFrame:
-    if noise_type in [None, NoiseType.NONE]:
+    noise_type = NoiseType.coerce(noise_type)
+
+    if noise_type == NoiseType.NONE:
         return df
 
     if random_seed is not None:

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "strata_fit_v6_km_py"
+version = "1.0.0"
+description = "Standalone STRATA-FIT Kaplan-Meier algorithm using run_context runtime."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "Strata-Fit Team" }]
+dependencies = [
+    "numpy",
+    "pandas",
+    "pydantic",
+    "requests",
+    "PyJWT",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "matplotlib==3.10.1",
+    "vantage6-client>=4.13.3",
+]
+
+[project.entry-points."run_context"]
+get_unique_event_times = "strata_fit_v6_km_py.partial:get_unique_event_times"
+get_km_event_table = "strata_fit_v6_km_py.partial:get_km_event_table"
+get_d2t_prevalence_by_year = "strata_fit_v6_km_py.partial:get_d2t_prevalence_by_year"
+kaplan_meier_central = "strata_fit_v6_km_py.central:kaplan_meier_central"
+
+[project.scripts]
+strata-fit-v6-km-dispatch = "strata_fit_v6_km_py.container:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["strata_fit_v6_km_py*"]

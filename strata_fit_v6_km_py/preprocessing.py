@@ -205,7 +205,19 @@ def compute_d2t_prevalence_by_year(df: pd.DataFrame) -> pd.DataFrame:
 
     df['cum_unique_btsDMARD'] = compute_unique_dmards(df)
     df['cum_btsDMARDmin'] = df.groupby('pat_ID')['cum_unique_btsDMARD'].cummin()
+    df['last_dmard_change_id'] = (
+        df.groupby('pat_ID')['cum_unique_btsDMARD']
+        .transform(lambda x: x.ne(x.shift()).cumsum())
+    )
+    df['last_dmard_start_month'] = (
+        df.groupby(['pat_ID', 'last_dmard_change_id'])['Visit_months_from_diagnosis']
+        .transform('min')
+    )
+    df['months_since_last_dmard'] = (
+        df['Visit_months_from_diagnosis'] - df['last_dmard_start_month']
+    )
     df['rolling_avg_DAS28'] = df.groupby('pat_ID')['DAS28'].rolling(window=3, min_periods=1).mean().reset_index(level=0, drop=True)
+    df['rolling_avg_CRP'] = df.groupby('pat_ID')['CRP'].rolling(window=3, min_periods=1).mean().reset_index(level=0, drop=True)
 
     df['D2T_crit1'] = (
         (df['cum_unique_btsDMARD'] >= 2) &
