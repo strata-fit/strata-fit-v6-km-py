@@ -1,5 +1,6 @@
+from io import StringIO
 import pandas as pd
-from typing import Dict, List, Union, Optional
+from typing import Dict, List, Union, Optional, Any
 
 from vantage6.algorithm.client import AlgorithmClient
 from vantage6.algorithm.tools.util import info
@@ -14,14 +15,21 @@ from .types import (
     MINIMUM_ORGANIZATIONS
 )
 
+
+def _read_json_frame(result: Any) -> pd.DataFrame:
+    if isinstance(result, str):
+        return pd.read_json(StringIO(result))
+    return pd.read_json(result)
+
 @algorithm_client
 def kaplan_meier_central(
     client: AlgorithmClient,
     organizations_to_include: Optional[List[int]] = None,
+    cohort: Optional[dict] = None,
     noise_type: NoiseType = NoiseType.NONE,
     snr: Optional[float] = None,
     random_seed: Optional[int] = None,
-) -> Dict[str, Union[str, List[str]]]:
+) -> Dict[str, Any]:
     """
     Orchestrates the federated Kaplan-Meier survival analysis with interval censoring
     across multiple organizations using Vantage6.
@@ -87,6 +95,7 @@ def kaplan_meier_central(
         client,
         method="get_unique_event_times",
         organizations_to_include=organizations_to_include,
+        cohort=cohort,
         noise_type=noise_type,
         snr=snr,
         random_seed=random_seed,
@@ -102,11 +111,12 @@ def kaplan_meier_central(
         method="get_km_event_table",
         organizations_to_include=organizations_to_include,
         unique_event_times=unique_event_times,
+        cohort=cohort,
         noise_type=noise_type,
         snr=snr,
         random_seed=random_seed,
     )
-    local_event_tables = [pd.read_json(result) for result in local_event_tables_results]
+    local_event_tables = [_read_json_frame(result) for result in local_event_tables_results]
 
     info("Step 3: Aggregating local event tables.")
     km_df = pd.concat(local_event_tables).groupby(DEFAULT_INTERVAL_START_COLUMN, as_index=False).sum()
@@ -119,8 +129,9 @@ def kaplan_meier_central(
     client,
     method="get_d2t_prevalence_by_year",
     organizations_to_include=organizations_to_include,
+    cohort=cohort,
     )
-    local_prevalence_dfs = [pd.read_json(result) for result in local_prevalence_results]
+    local_prevalence_dfs = [_read_json_frame(result) for result in local_prevalence_results]
     prevalence_df = pd.concat(local_prevalence_dfs).groupby("Year_visit", as_index=False).sum()
     prevalence_df["D2T_RA_prevalence"] = (
         prevalence_df["d2t_positive"] / prevalence_df["total_patients"]
@@ -129,10 +140,35 @@ def kaplan_meier_central(
    
     
     info("Kaplan-Meier curve with interval censoring computed.")
+    series = [
+        {
+            "time_months": float(row[DEFAULT_INTERVAL_START_COLUMN]),
+            "cumulative_incidence": float(row[DEFAULT_CUMULATIVE_INCIDENCE_COLUMN]),
+            "at_risk": int(row["at_risk"]),
+            "observed": int(row["observed"]),
+            "censored": int(row["censored"]),
+            "interval": int(row["interval"]),
+        }
+        for _, row in km_df.iterrows()
+    ]
+    prevalence_series = [
+        {
+            "year": int(row["Year_visit"]),
+            "prevalence": float(row["D2T_RA_prevalence"]),
+        }
+        for _, row in prevalence_df.iterrows()
+    ]
     return {
-    "km_result": km_df.to_json(),
-    "d2t_prevalence": prevalence_df.to_json()
-}
+        "series": series,
+        "prevalence_series": prevalence_series,
+        "metadata": {
+            "included_organizations": organizations_to_include,
+            "event_definition": "current_d2t_like",
+            "time_origin": "diagnosis",
+        },
+        "km_result": km_df.to_json(),
+        "d2t_prevalence": prevalence_df.to_json(),
+    }
 
 def _start_partial_and_collect_results(
     client: AlgorithmClient,

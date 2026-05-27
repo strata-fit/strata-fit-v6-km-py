@@ -14,10 +14,12 @@ from .types import (
 from .utils import add_noise_to_event_times
 from .preprocessing import strata_fit_data_to_km_input
 from .preprocessing import compute_d2t_prevalence_by_year
+from .cohort import filter_dataframe_for_cohort
 
 @data(1)
 def get_unique_event_times(
     df: pd.DataFrame,
+    cohort: Optional[dict] = None,
     noise_type: NoiseType = NoiseType.NONE,
     snr: Optional[float] = None,
     random_seed: Optional[int] = None,
@@ -26,6 +28,7 @@ def get_unique_event_times(
     Preprocess the data and collect unique event times from the standardized columns.
     """
     info("Starting get_unique_event_times task.")
+    df = filter_dataframe_for_cohort(df, cohort)
     info("Running preprocessing on input data for unique event times.")
     df = strata_fit_data_to_km_input(df)
     info(f"Preprocessing complete. Processed {df.shape[0]} rows.")
@@ -49,6 +52,7 @@ def get_unique_event_times(
 def get_km_event_table(
     df: pd.DataFrame,
     unique_event_times: List[float],
+    cohort: Optional[dict] = None,
     noise_type: NoiseType = NoiseType.NONE,
     snr: Optional[float] = None,
     random_seed: Optional[int] = None,
@@ -57,6 +61,7 @@ def get_km_event_table(
     Preprocess the data and generate an event table for Kaplan-Meier calculation with interval censoring.
     """
     info("Starting get_km_event_table task.")
+    df = filter_dataframe_for_cohort(df, cohort)
     info("Running preprocessing on input data for KM event table.")
     df = strata_fit_data_to_km_input(df)
     info(f"Preprocessing complete. Processed {df.shape[0]} rows.")
@@ -106,11 +111,12 @@ def get_km_event_table(
     return event_table.to_json()
 
 @data(1)
-def get_d2t_prevalence_by_year(df: pd.DataFrame) -> str:
+def get_d2t_prevalence_by_year(df: pd.DataFrame, cohort: Optional[dict] = None) -> str:
     """
     Partial function to compute per-year D2T prevalence on each node.
     """
     from .preprocessing import compute_d2t_prevalence_by_year
 
+    df = filter_dataframe_for_cohort(df, cohort)
     prevalence_df = compute_d2t_prevalence_by_year(df)
     return prevalence_df.to_json()
