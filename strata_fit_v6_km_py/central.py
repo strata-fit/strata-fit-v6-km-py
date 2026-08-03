@@ -1,3 +1,4 @@
+import math
 import pandas as pd
 from typing import Dict, List, Union, Optional
 
@@ -5,14 +6,25 @@ from vantage6.algorithm.client import AlgorithmClient
 from vantage6.algorithm.tools.util import info
 from vantage6.algorithm.tools.decorators import algorithm_client
 from vantage6.algorithm.tools.exceptions import PrivacyThresholdViolation
-from .preprocessing import compute_d2t_prevalence_by_year 
-
 from .types import (
     NoiseType,
     DEFAULT_INTERVAL_START_COLUMN,
     DEFAULT_CUMULATIVE_INCIDENCE_COLUMN,
     MINIMUM_ORGANIZATIONS
 )
+
+
+def _compute_mean_and_sd(count: int, total: float, total_sq: float) -> tuple[float, float]:
+    if count == 0:
+        return float("nan"), float("nan")
+
+    mean = total / count
+    if count == 1:
+        return mean, float("nan")
+
+    variance = (total_sq - (total ** 2) / count) / (count - 1)
+    variance = max(variance, 0.0)
+    return mean, math.sqrt(variance)
 
 @algorithm_client
 def kaplan_meier_central(
@@ -70,6 +82,7 @@ def kaplan_meier_central(
               - removed, observed, interval, censored, at_risk, hazard
               - cumulative_incidence
         - "d2t_prevalence" (str): JSON-encoded DataFrame of D2T-RA prevalence per year.
+        - "d2t_characteristics" (str): JSON-encoded one-row DataFrame with D2T population summary.
     
     Raises
     ------
@@ -113,26 +126,75 @@ def kaplan_meier_central(
     km_df["hazard"] = (km_df["observed"] + km_df["interval"] * 0.5) / km_df["at_risk"]
     km_df[DEFAULT_CUMULATIVE_INCIDENCE_COLUMN] = 1 - (1 - km_df["hazard"]).cumprod()
 
-#4 Collect  data for prevalence computation
+    # Step 4: collect data for prevalence computation
     info("Step 4: Collecting D2T-RA prevalence tables from nodes.")
     local_prevalence_results = _start_partial_and_collect_results(
-    client,
-    method="get_d2t_prevalence_by_year",
-    organizations_to_include=organizations_to_include,
+        client,
+        method="get_d2t_prevalence_by_year",
+        organizations_to_include=organizations_to_include,
     )
     local_prevalence_dfs = [pd.read_json(result) for result in local_prevalence_results]
     prevalence_df = pd.concat(local_prevalence_dfs).groupby("Year_visit", as_index=False).sum()
     prevalence_df["D2T_RA_prevalence"] = (
         prevalence_df["d2t_positive"] / prevalence_df["total_patients"]
     )
-   
-   
-    
+
+    info("Step 5: Collecting D2T-RA characteristics summary from nodes.")
+    local_characteristics_results = _start_partial_and_collect_results(
+        client,
+        method="get_d2t_characteristics_summary",
+        organizations_to_include=organizations_to_include,
+    )
+    local_characteristics_dfs = [pd.read_json(result) for result in local_characteristics_results]
+    characteristics_components = pd.concat(local_characteristics_dfs, ignore_index=True).sum(numeric_only=True)
+
+    female_pct = (
+        100.0 * characteristics_components["female_positive_count"] / characteristics_components["female_non_missing_count"]
+        if characteristics_components["female_non_missing_count"] > 0
+        else float("nan")
+    )
+    rf_pct = (
+        100.0 * characteristics_components["rf_positive_count"] / characteristics_components["rf_non_missing_count"]
+        if characteristics_components["rf_non_missing_count"] > 0
+        else float("nan")
+    )
+    anti_ccp_pct = (
+        100.0 * characteristics_components["anti_ccp_positive_count"] / characteristics_components["anti_ccp_non_missing_count"]
+        if characteristics_components["anti_ccp_non_missing_count"] > 0
+        else float("nan")
+    )
+    age_mean, age_sd = _compute_mean_and_sd(
+        int(characteristics_components["age_count"]),
+        float(characteristics_components["age_sum"]),
+        float(characteristics_components["age_sum_sq"]),
+    )
+    das28_mean, das28_sd = _compute_mean_and_sd(
+        int(characteristics_components["das28_count"]),
+        float(characteristics_components["das28_sum"]),
+        float(characteristics_components["das28_sum_sq"]),
+    )
+
+    characteristics_df = pd.DataFrame(
+        [
+            {
+                "d2t_patients": int(characteristics_components["d2t_patients"]),
+                "female_percentage": female_pct,
+                "rf_positive_percentage": rf_pct,
+                "anti_ccp_positive_percentage": anti_ccp_pct,
+                "age_mean": age_mean,
+                "age_sd": age_sd,
+                "das28_mean_at_d2t": das28_mean,
+                "das28_sd_at_d2t": das28_sd,
+            }
+        ]
+    )
+
     info("Kaplan-Meier curve with interval censoring computed.")
     return {
-    "km_result": km_df.to_json(),
-    "d2t_prevalence": prevalence_df.to_json()
-}
+        "km_result": km_df.to_json(),
+        "d2t_prevalence": prevalence_df.to_json(),
+        "d2t_characteristics": characteristics_df.to_json(),
+    }
 
 def _start_partial_and_collect_results(
     client: AlgorithmClient,

@@ -12,8 +12,11 @@ from .types import (
     DEFAULT_EVENT_INDICATOR_COLUMN
 )
 from .utils import add_noise_to_event_times
-from .preprocessing import strata_fit_data_to_km_input
-from .preprocessing import compute_d2t_prevalence_by_year
+from .preprocessing import (
+    strata_fit_data_to_km_input,
+    compute_d2t_prevalence_by_year,
+    compute_d2t_characteristics_summary,
+)
 
 @data(1)
 def get_unique_event_times(
@@ -114,3 +117,12 @@ def get_d2t_prevalence_by_year(df: pd.DataFrame) -> str:
 
     prevalence_df = compute_d2t_prevalence_by_year(df)
     return prevalence_df.to_json()
+
+
+@data(1)
+def get_d2t_characteristics_summary(df: pd.DataFrame) -> str:
+    """
+    Partial function to compute aggregate components for the D2T characteristics table.
+    """
+    summary_df = compute_d2t_characteristics_summary(df)
+    return summary_df.to_json()
